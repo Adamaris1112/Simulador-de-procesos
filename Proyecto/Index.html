@@ -93,15 +93,15 @@
       setGantt([]);
       setCpuState(null);
       // clone processes with remaining
-      const updatedProcesses = processes.map(p => ({...p, remaining: p.cpuTime}));
-      setProcesses(updatedProcesses);
-      
-      // Procesar procesos que llegan en el tiempo 0 inmediatamente
-      const arrivingAtZero = updatedProcesses.filter(p => p.arrival === 0);
-      if(arrivingAtZero.length) {
-        setReadyQueue(arrivingAtZero);
-        log('Llegaron en t=0: ' + arrivingAtZero.map(a=>a.name).join(', '));
-      }
+      setProcesses(ps => ps.map(p => ({...p, remaining: p.cpuTime})));
+       setProcesses(all => {
+    const arriving = all.filter(p => p.arrival === 0);
+    if (arriving.length) {
+      setReadyQueue(q => [...q, ...arriving]);
+      log('Llegaron (t=0): ' + arriving.map(a => a.name).join(', '));
+    }
+    return all;
+      });
       
       log('Iniciando simulación: ' + algorithm);
       setRunning(true);
@@ -126,17 +126,15 @@
     }
 
     function onTimeAdvance(timeNow) {
-      // agregar procesos que llegan (solo para tiempos > 0, ya que t=0 se maneja en start())
-      if (timeNow > 0) {
-        setProcesses(all => {
-          const arriving = all.filter(p => p.arrival === timeNow && p.remaining >= 0);
-          if(arriving.length) {
-            setReadyQueue(q => [...q, ...arriving]);
-            log('Llegaron: ' + arriving.map(a=>a.name).join(', ') + ' en t=' + timeNow);
-          }
-          return all;
-        });
-      }
+      // agregar procesos que llegan
+      setProcesses(all => {
+        const arriving = all.filter(p => p.arrival === timeNow && p.remaining > 0);
+        if(arriving.length) {
+          setReadyQueue(q => [...q, ...arriving]);
+          log('Llegaron: ' + arriving.map(a=>a.name).join(', '));
+        }
+        return all;
+      });
       runStep(timeNow);
     }
 
