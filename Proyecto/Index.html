@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Simulador de Planificación - React (Standalone)</title>
+  <style>
+    /* Estilos básicos sin dependencias externas */
+    :root{--bg:#f6f7fb;--card:#fff;--accent:#2563eb;--muted:#6b7280}
+    body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;margin:0;background:var(--bg);color:#111}
+    .container{max-width:1100px;margin:24px auto;padding:18px}
+    .card{background:var(--card);padding:14px;border-radius:12px;box-shadow:0 6px 18px rgba(15,23,42,0.06);margin-bottom:14px}
+    h1{margin:0 0 8px;font-size:22px}
+    .grid{display:grid;gap:12px}
+    .grid.cols-3{grid-template-columns:repeat(3,1fr)}
+    .flex{display:flex;gap:8px;align-items:center}
+    .btn{padding:8px 12px;border-radius:8px;border:1px solid #e6e9ef;background:#fff;cursor:pointer}
+    .btn.primary{background:var(--accent);color:white;border:none}
+    input,select{padding:8px;border-radius:8px;border:1px solid #e6e9ef;width:100%}
+    .small{font-size:13px;color:var(--muted)}
+    .list-scroll{max-height:220px;overflow:auto}
+    .gantt{display:flex;gap:6px;flex-wrap:wrap}
+    .gseg{padding:6px;border-radius:8px;border:1px solid #e6e9ef;min-width:64px;text-align:center}
+    pre{white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React + ReactDOM (production builds from CDN) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+  <!-- Our app -->
+  <script type="text/javascript">
+  const { useState, useEffect, useRef } = React;
+
+  function SchedulerSimulatorStandalone() {
+    // Estados
+    const [processes, setProcesses] = useState([]);
+    const [pidCounter, setPidCounter] = useState(1);
+    const [algorithm, setAlgorithm] = useState('FCFS');
+    const [quantum, setQuantum] = useState(2);
+    const [unitMs, setUnitMs] = useState(5000); // 5s por unidad
+    const [currentTime, setCurrentTime] = useState(0);
+    const [running, setRunning] = useState(false);
+
+    const [readyQueue, setReadyQueue] = useState([]);
+    const [history, setHistory] = useState([]);
+    const [gantt, setGantt] = useState([]);
+    const [cpuState, setCpuState] = useState(null);
+    const [logs, setLogs] = useState([]);
+
+    const timerRef = useRef(null);
+
+    // util
+    const log = (t) => setLogs(s => [t, ...s].slice(0,200));
+
+    // agregar proceso
+    function addProcessObj(name, cpuTime, arrival, q) {
+      const pid = pidCounter;
+      setPidCounter(pid+1);
+      const p = {
+        pid,
+        name: name || ('P'+pid),
+        cpuTime: Number(cpuTime),
+        remaining: Number(cpuTime),
+        arrival: Number(arrival),
+        quantum: q ? Number(q) : undefined
+      };
+      setProcesses(s => [...s, p].sort((a,b)=> (a.arrival - b.arrival) || (a.pid - b.pid)));
+      log('Creado: ' + p.name + ' (PID '+p.pid+')');
+    }
+
+    function resetAll() {
+      setRunning(false);
+      if (timerRef.current) clearInterval(timerRef.current);
+      setCurrentTime(0);
+      setReadyQueue([]);
+      setHistory([]);
+      setGantt([]);
+      setCpuState(null);
+      setLogs([]);
+      setProcesses([]);
+      setPidCounter(1);
+    }
+
+    function start() {
+      // reset simulation state but keep process definitions
+      setCurrentTime(0);
+      setReadyQueue([]);
+      setHistory([]);
+      setGantt([]);
+      setCpuState(null);
+      // clone processes with remaining
+      const updatedProcesses = processes.map(p => ({...p, remaining: p.cpuTime}));
+      setProcesses(updatedProcesses);
+      
+      // Procesar procesos que llegan en el tiempo 0 inmediatamente
+      const arrivingAtZero = updatedProcesses.filter(p => p.arrival === 0);
+      if(arrivingAtZero.length) {
+        setReadyQueue(arrivingAtZero);
+        log('Llegaron en t=0: ' + arrivingAtZero.map(a=>a.name).join(', '));
+      }
+      
+      log('Iniciando simulación: ' + algorithm);
+      setRunning(true);
+    }
+
+    useEffect(()=>{
+      if(!running) {
+        if(timerRef.current) clearInterval(timerRef.current);
+        return;
+      }
+      if(timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(()=> tick(), unitMs);
+      return ()=> clearInterval(timerRef.current);
+    }, [running, unitMs, algorithm, quantum]);
+
+    function tick(){
+      setCurrentTime(t => {
+        const nt = t+1;
+        onTimeAdvance(nt);
+        return nt;
+      });
+    }
+
+    function onTimeAdvance(timeNow) {
+      // agregar procesos que llegan (solo para tiempos > 0, ya que t=0 se maneja en start())
+      if (timeNow > 0) {
+        setProcesses(all => {
+          const arriving = all.filter(p => p.arrival === timeNow && p.remaining >= 0);
+          if(arriving.length) {
+            setReadyQueue(q => [...q, ...arriving]);
+            log('Llegaron: ' + arriving.map(a=>a.name).join(', ') + ' en t=' + timeNow);
+          }
+          return all;
+        });
+      }
+      runStep(timeNow);
+    }
+
+    function runStep(timeNow){
+      setReadyQueue(rq => {
+        let ready = [...rq];
+        if(!cpuState) {
+          if(ready.length === 0) return ready;
+          // pick next
+          let chosen = null;
+          if(algorithm === 'FCFS') chosen = ready[0];
+          else if(algorithm === 'SJF') chosen = ready.reduce((a,b)=> a.cpuTime <= b.cpuTime ? a : b);
+          else if(algorithm === 'SRTF') chosen = ready.reduce((a,b)=> a.remaining <= b.remaining ? a : b);
+          else if(algorithm === 'RoundRobin') chosen = ready[0];
+
+          ready = ready.filter(p=>p.pid !== chosen.pid);
+          startExec(chosen, timeNow);
+          return ready;
+        } else {
+          // CPU busy
+          if(algorithm === 'SRTF') {
+            const better = ready.find(p => p.remaining < cpuState.remaining);
+            if(better) {
+              log('Preempt: ' + cpuState.name + ' -> ' + better.name);
+              // move current back to ready
+              setReadyQueue(prev => [...prev, {...cpuState}]);
+              // remove better from ready then start
+              ready = ready.filter(p => p.pid !== better.pid);
+              startExec(better, timeNow);
+              return ready;
+            }
+            // else continue
+            continueExec(timeNow);
+            return ready;
+          }
+          if(algorithm === 'RoundRobin') {
+            continueExec(timeNow);
+            return ready;
+          }
+          // non-preemptive continue
+          continueExec(timeNow);
+          return ready;
+        }
+      });
+    }
+
+    function startExec(proc, timeNow) {
+      if(!proc) return;
+      const runningProc = {...proc, usedQuantum:0};
+      setCpuState(runningProc);
+      setGantt(g => [...g, {pid: runningProc.pid, name: runningProc.name, start: timeNow, end: null}]);
+      log('CPU inicia: ' + runningProc.name + ' (rem '+ runningProc.remaining +'u)');
+    }
+
+    function continueExec(timeNow) {
+      setCpuState(c => {
+        if(!c) return c;
+        const updated = {...c};
+        updated.remaining = Math.max(0, updated.remaining - 1);
+        updated.usedQuantum = (updated.usedQuantum||0) + 1;
+
+        setGantt(g => {
+          if(g.length === 0) return g;
+          const last = g[g.length-1];
+          if(last.pid !== updated.pid) {
+            return [...g, {pid: updated.pid, name: updated.name, start: timeNow, end: timeNow+1}];
+          }
+          const copy = [...g];
+          copy[copy.length-1] = {...last, end: timeNow+1};
+          return copy;
+        });
+
+        if(updated.remaining === 0) {
+          const finish = timeNow+1;
+          const turnaround = finish - updated.arrival;
+          const waiting = turnaround - updated.cpuTime;
+          setHistory(h => [...h, {...updated, finishTime:finish, turnaround, waiting}]);
+          setProcesses(ps => ps.filter(pp => pp.pid !== updated.pid));
+          setCpuState(null);
+          log('Finalizó ' + updated.name + ' t=' + finish + ' (TA=' + turnaround + ', WT=' + waiting + ')');
+          return null;
+        }
+
+        if(algorithm === 'RoundRobin' && updated.usedQuantum >= quantum) {
+          updated.usedQuantum = 0;
+          setReadyQueue(r => [...r, updated]);
+          setCpuState(null);
+          log('Quantum agotado: ' + updated.name + ' (rem ' + updated.remaining + 'u)');
+          return null;
+        }
+
+        return updated;
+      });
+    }
+
+    // Form handling
+    function onAdd(e) {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      const name = f.get('name').trim();
+      const cpuTime = Number(f.get('cpuTime'));
+      const arrival = Number(f.get('arrival'));
+      const q = f.get('q') ? Number(f.get('q')) : undefined;
+      if(!cpuTime || cpuTime <= 0) { alert('Tiempo CPU debe ser >0'); return; }
+      addProcessObj(name, cpuTime, arrival, q);
+      e.target.reset();
+    }
+
+    return React.createElement('div', {className:'container'},
+      React.createElement('div', {className:'card'},
+        React.createElement('h1', null, 'Simulador de Planificación (React - standalone)'),
+        React.createElement('div', {className:'small'}, 'Algoritmos: FCFS, SJF, SRTF, Round Robin. Unidad por defecto = 5s.')
+      ),
+
+      React.createElement('div', {className:'grid cols-3'},
+        // Left: form
+        React.createElement('div', {className:'card'},
+          React.createElement('h3', null, 'Crear proceso'),
+          React.createElement('form', {onSubmit:onAdd},
+            React.createElement('div', null,
+              React.createElement('input', {name:'name', placeholder:'Nombre (opcional)'}),
+            ),
+            React.createElement('div', {style:{marginTop:8}},
+              React.createElement('input', {name:'cpuTime', type:'number', min:1, placeholder:'Tiempo CPU (u) ', required:true})
+            ),
+            React.createElement('div', {style:{marginTop:8}},
+              React.createElement('input', {name:'arrival', type:'number', min:0, placeholder:'Instante de llegada (u)', defaultValue:0})
+            ),
+            React.createElement('div', {style:{marginTop:8}},
+              React.createElement('input', {name:'q', type:'number', min:1, placeholder:'Quantum (opcional)'})
+            ),
+            React.createElement('div', {className:'flex', style:{marginTop:10}},
+              React.createElement('button', {type:'submit', className:'btn primary'}, 'Agregar'),
+              React.createElement('button', {type:'button', className:'btn', onClick: ()=> setProcesses([])}, 'Limpiar lista')
+            )
+          ),
+          React.createElement('hr', {style:{margin:'10px 0'}}),
+          React.createElement('div', null,
+            React.createElement('div', null, 'Configuración'),
+            React.createElement('div', {style:{marginTop:8}},
+              React.createElement('select', {value:algorithm, onChange:e=>setAlgorithm(e.target.value)}, 
+                React.createElement('option', null, 'FCFS'),
+                React.createElement('option', null, 'SJF'),
+                React.createElement('option', null, 'SRTF'),
+                React.createElement('option', null, 'RoundRobin')
+              )
+            ),
+            React.createElement('div', {style:{marginTop:8}},
+              React.createElement('input', {type:'number', value:quantum, min:1, onChange:e=>setQuantum(Number(e.target.value))})
+            ),
+            React.createElement('div', {style:{marginTop:8}},
+              React.createElement('input', {type:'number', value:unitMs, min:200, onChange:e=>setUnitMs(Number(e.target.value))})
+            ),
+            React.createElement('div', {className:'flex', style:{marginTop:10}},
+              React.createElement('button', {className:'btn primary', onClick:start}, 'Iniciar'),
+              React.createElement('button', {className:'btn', onClick: ()=> setRunning(r => { if(r){ if(timerRef.current) clearInterval(timerRef.current); log('Pausado'); } else log('Reanudado'); return !r })}, running? 'Pausar' : 'Reanudar'),
+              React.createElement('button', {className:'btn', onClick: resetAll}, 'Reset Total')
+            )
+          )
+        ),
+
+        // Middle: processes & queue
+        React.createElement('div', {className:'card', style:{gridColumn:'span 2'}},
+          React.createElement('div', {className:'flex', style:{justifyContent:'space-between'}},
+            React.createElement('h3', null, 'Procesos definidos'),
+            React.createElement('div', null, 'Tiempo actual: ', React.createElement('strong', null, currentTime))
+          ),
+          React.createElement('div', {style:{display:'grid',gridTemplateColumns:'1fr 1fr', gap:12, marginTop:10}},
+            React.createElement('div', null,
+              React.createElement('h4', null, 'Lista por llegada'),
+              React.createElement('div', {className:'list-scroll', style:{marginTop:8}},
+                processes.length===0? React.createElement('div', {className:'small'}, 'No hay procesos') : processes.map(p=> React.createElement('div', {key:p.pid, className:'card', style:{padding:8,marginBottom:8,display:'flex',justifyContent:'space-between'}},
+                  React.createElement('div', null, React.createElement('div', {style:{fontWeight:600}}, p.name + ' (PID '+p.pid+')'), React.createElement('div', {className:'small'}, 'CPU:'+p.cpuTime+'u — llegada:'+p.arrival+'u — rem:'+p.remaining+'u')),
+                  React.createElement('div', null, React.createElement('button', {className:'btn', onClick: ()=> setProcesses(prev => prev.filter(x => x.pid !== p.pid))}, 'Eliminar'))
+                ))
+              )
+            ),
+            React.createElement('div', null,
+              React.createElement('h4', null, 'Cola de listos'),
+              React.createElement('div', {className:'list-scroll', style:{marginTop:8}},
+                readyQueue.length===0? React.createElement('div', {className:'small'}, 'Cola vacía') : readyQueue.map(p => React.createElement('div', {key:'rq-'+p.pid, className:'card', style:{padding:8,marginBottom:8}},
+                  React.createElement('div', {style:{fontWeight:600}}, p.name + ' (PID '+p.pid+')'),
+                  React.createElement('div', {className:'small'}, 'Rem:'+p.remaining+'u — llegada:'+p.arrival+'u')
+                ))
+              ),
+              React.createElement('div', {style:{marginTop:12}},
+                React.createElement('h4', null, 'CPU'),
+                React.createElement('div', {className:'card', style:{padding:10,marginTop:8}},
+                  cpuState? React.createElement('div', null, React.createElement('div', {style:{fontWeight:600}}, 'En ejecución: ' + cpuState.name + ' (PID ' + cpuState.pid + ')'), React.createElement('div', {className:'small'}, 'Rem: ' + cpuState.remaining + 'u')) : React.createElement('div', {className:'small'}, 'CPU inactiva')
+                )
+              )
+            )
+          ),
+
+          React.createElement('hr', {style:{margin:'12px 0'}}),
+
+          React.createElement('div', null,
+            React.createElement('h4', null, 'Gantt'),
+            React.createElement('div', {className:'gantt', style:{marginTop:8}},
+              gantt.length===0? React.createElement('div', {className:'small'}, 'Sin actividad aún.') : gantt.map((s,i)=> React.createElement('div', {className:'gseg', key:i},
+                React.createElement('div', {style:{fontWeight:600}}, s.name),
+                React.createElement('div', {className:'small'}, (s.start) + ' - ' + (s.end === null ? '...' : s.end))
+              ))
+            )
+          ),
+
+          React.createElement('div', {style:{marginTop:12}},
+            React.createElement('h4', null, 'Historial (finalizados)'),
+            React.createElement('div', {className:'list-scroll', style:{marginTop:8}},
+              history.length===0? React.createElement('div', {className:'small'}, 'Aún no hay finalizados') : history.map(h=> React.createElement('div', {className:'card', key:'h-'+h.pid, style:{display:'flex',justifyContent:'space-between',padding:8,marginBottom:8}},
+                React.createElement('div', null, React.createElement('div', {style:{fontWeight:600}}, h.name + ' (PID ' + h.pid + ')'), React.createElement('div', {className:'small'}, 'Llegada: ' + h.arrival + 'u — Finish: ' + h.finishTime + 'u — TA: ' + h.turnaround + 'u — WT: ' + h.waiting + 'u')),
+                React.createElement('div', {className:'small'}, 'CPU: ' + h.cpuTime + 'u')
+              ))
+            )
+          )
+        )
+      ),
+
+      React.createElement('div', {className:'card'},
+        React.createElement('h4', null, 'Logs'),
+        React.createElement('div', {className:'list-scroll', style:{marginTop:8}},
+          logs.length===0? React.createElement('div', {className:'small'}, 'Sin eventos') : logs.map((m,i)=> React.createElement('div', {key:i, style:{padding:'6px 0',borderBottom:'1px solid #f0f2f5'}}, m))
+        )
+      )
+    );
+  }
+
+  // Montar React
+  const root = ReactDOM.createRoot(document.getElementById('root'));
+  root.render(React.createElement(SchedulerSimulatorStandalone));
+  </script>
+</body>
+</html>
