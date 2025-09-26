@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Simulador de Planificación - React (Standalone)</title>
+  <!--Este archivo simula la planificacion de procesos en CPU con FCFS,SJF, SRT Y Round Rubin -->
   <style>
     /* Estilos básicos sin dependencias externas */
     :root{--bg:#f6f7fb;--card:#fff;--accent:#2563eb;--muted:#6b7280}
@@ -60,6 +61,11 @@
     function addProcessObj(name, cpuTime, arrival, q) {
       const pid = pidCounter;
       setPidCounter(pid+1);
+
+    // Validaciones mínimas
+    if(!cpuTime || cpuTime <= 0) { alert('Tiempo CPU debe ser mayor que 0'); return; }
+    if(arrival < 0) { alert('Instante de llegada no puede ser negativo'); return; }
+
       const p = {
         pid,
         name: name || ('P'+pid),
@@ -121,6 +127,9 @@
       setCurrentTime(t => {
         const nt = t+1;
         onTimeAdvance(nt);
+        // Aquí agregamos el log del tiempo y estado de CPU
+        log('Tiempo actual: ' + nt + 'u — CPU: ' + (cpuState ? cpuState.name : 'inactiva'));
+
         return nt;
       });
     }
