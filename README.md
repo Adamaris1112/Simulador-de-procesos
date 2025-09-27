@@ -9,6 +9,7 @@ El usuario puede crear procesos definiendo su nombre, tiempo de CPU, instante de
 ## Tecnologias Utilizadas
 - HTML
 - CSS
+- React
 
 ## Uso
 - Abrir el archivo HTML en un navegador (no requiere instalación adicional).
