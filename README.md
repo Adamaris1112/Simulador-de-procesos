@@ -23,4 +23,8 @@ El usuario puede crear procesos definiendo su nombre, tiempo de CPU, instante de
 - Reset total (Para reiniciar todo el sistema).
 
 ## Capturas de Pantalla
+<img width="1919" height="994" alt="image" src="https://github.com/user-attachments/assets/4c67ab08-ea34-4ec7-8994-5717ec48b8bc" />
+<img width="1919" height="995" alt="image" src="https://github.com/user-attachments/assets/04551e63-678d-4f28-85d8-902e36848bcc" />
+<img width="1919" height="994" alt="image" src="https://github.com/user-attachments/assets/bf87eacc-fd2e-4798-ba60-c24820d0837c" />
+
 
