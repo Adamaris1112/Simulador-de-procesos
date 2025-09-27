@@ -209,7 +209,7 @@ function startExec(proc, timeNow) {
   log('CPU inicia: ' + runningProc.name + ' (rem '+ runningProc.remaining +'u)');
 }
 
-// Continuar ejecutando el proceso actual en la CPU
+// Se continua ejecutando el proceso en el GPU
 function continueExec(timeNow) {
   setCpuState(c => {
     if(!c) return c;
@@ -255,11 +255,11 @@ function continueExec(timeNow) {
       return null;
     }
 
-    return updated; // Proceso sigue en ejecución
+    return updated; // El Proceso sigue en ejecucion
   });
 }
 
-    // Form handling
+    
     function onAdd(e) {
       e.preventDefault();
       const f = new FormData(e.target);
@@ -397,4 +397,5 @@ function continueExec(timeNow) {
   </script>
 </body>
 </html>
+
 
