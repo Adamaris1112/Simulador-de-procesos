@@ -214,7 +214,7 @@ function continueExec(timeNow) {
   setCpuState(c => {
     if(!c) return c;
     const updated = {...c};
-    updated.remaining = Math.max(0, updated.remaining - 1); // Disminuye tiempo restante
+    updated.remaining--; // Disminuye tiempo restante
     updated.usedQuantum = (updated.usedQuantum||0) + 1; // Incrementa quantum usado
 
     // Actualizar el diagrama de Gantt
@@ -232,10 +232,16 @@ function continueExec(timeNow) {
     });
 
     // Si el proceso terminó (tiempo restante = 0)
-    if(updated.remaining === 0) {
+    if(updated.remaining <= 0) {
       const finish = timeNow+1;
       const turnaround = finish - updated.arrival; // Tiempo de retorno total
       const waiting = turnaround - updated.cpuTime; // Tiempo de espera
+      setHistory(h => [...h, {...updated, finishTime: finish, turnaround, waiting}]);
+      setProcesses(ps => ps.filter(pp => pp.pid !== updated.pid));
+      setCpuState(null);
+      log('Finalizó ' + updated.name + ' t=' + finish + ' (TA=' + turnaround + ', WT=' + waiting + ')');
+      return null;
+    }
 
       // Guardar en historial de procesos terminados
       setHistory(h => [...h, {...updated, finishTime:finish, turnaround, waiting}]);
@@ -244,7 +250,6 @@ function continueExec(timeNow) {
       setCpuState(null); // CPU queda libre
       log('Finalizó ' + updated.name + ' t=' + finish + ' (TA=' + turnaround + ', WT=' + waiting + ')');
       return null;
-    }
 
     // Si es Round Robin y el quantum se agotó
     if(algorithm === 'RoundRobin' && updated.usedQuantum >= quantum) {
@@ -397,5 +402,3 @@ function continueExec(timeNow) {
   </script>
 </body>
 </html>
-
-
