@@ -146,98 +146,118 @@
       });
       runStep(timeNow);
     }
+function runStep(timeNow){
+  setReadyQueue(rq => {
+    let ready = [...rq]; // Copiamos la cola de listos actual
 
-    function runStep(timeNow){
-      setReadyQueue(rq => {
-        let ready = [...rq];
-        if(!cpuState) {
-          if(ready.length === 0) return ready;
-          // pick next
-          let chosen = null;
-          if(algorithm === 'FCFS') chosen = ready[0];
-          else if(algorithm === 'SJF') chosen = ready.reduce((a,b)=> a.cpuTime <= b.cpuTime ? a : b);
-          else if(algorithm === 'SRTF') chosen = ready.reduce((a,b)=> a.remaining <= b.remaining ? a : b);
-          else if(algorithm === 'RoundRobin') chosen = ready[0];
+    if(!cpuState) { 
+      // CPU libre
+      if(ready.length === 0) return ready; // Si no hay procesos listos, no hace nada
 
-          ready = ready.filter(p=>p.pid !== chosen.pid);
-          startExec(chosen, timeNow);
-          return ready;
-        } else {
-          // CPU busy
-          if(algorithm === 'SRTF') {
-            const better = ready.find(p => p.remaining < cpuState.remaining);
-            if(better) {
-              log('Preempt: ' + cpuState.name + ' -> ' + better.name);
-              // move current back to ready
-              setReadyQueue(prev => [...prev, {...cpuState}]);
-              // remove better from ready then start
-              ready = ready.filter(p => p.pid !== better.pid);
-              startExec(better, timeNow);
-              return ready;
-            }
-            // else continue
-            continueExec(timeNow);
-            return ready;
-          }
-          if(algorithm === 'RoundRobin') {
-            continueExec(timeNow);
-            return ready;
-          }
-          // non-preemptive continue
-          continueExec(timeNow);
+      // Escoger el próximo proceso según el algoritmo
+      let chosen = null;
+      if(algorithm === 'FCFS') chosen = ready[0]; // Primero que llega
+      else if(algorithm === 'SJF') chosen = ready.reduce((a,b)=> a.cpuTime <= b.cpuTime ? a : b); // Más corto primero
+      else if(algorithm === 'SRTF') chosen = ready.reduce((a,b)=> a.remaining <= b.remaining ? a : b); // Menor tiempo restante
+      else if(algorithm === 'RoundRobin') chosen = ready[0]; // Round Robin: el primero en la cola
+
+      // Quitar el proceso escogido de la cola y ejecutarlo
+      ready = ready.filter(p=>p.pid !== chosen.pid);
+      startExec(chosen, timeNow); 
+      return ready;
+
+    } else { 
+      // CPU ocupada
+      if(algorithm === 'SRTF') {
+        // Buscar si hay un proceso con menor tiempo restante que el actual
+        const better = ready.find(p => p.remaining < cpuState.remaining);
+        if(better) {
+          log('Preempt: ' + cpuState.name + ' -> ' + better.name);
+          // Interrupción: el proceso actual vuelve a la cola de listos
+          setReadyQueue(prev => [...prev, {...cpuState}]);
+          // Se remueve el nuevo mejor de la cola y se inicia
+          ready = ready.filter(p => p.pid !== better.pid);
+          startExec(better, timeNow);
           return ready;
         }
-      });
+        // Si no hay mejor, sigue ejecutando el actual
+        continueExec(timeNow);
+        return ready;
+      }
+
+      if(algorithm === 'RoundRobin') {
+        // En Round Robin, simplemente sigue hasta agotar quantum
+        continueExec(timeNow);
+        return ready;
+      }
+
+      // En algoritmos no expropiativos (FCFS y SJF), el proceso actual continúa
+      continueExec(timeNow);
+      return ready;
+    }
+  });
+}
+
+// Inicia ejecución de un proceso en la CPU
+function startExec(proc, timeNow) {
+  if(!proc) return;
+  const runningProc = {...proc, usedQuantum:0}; // Se reinicia el contador de quantum
+  setCpuState(runningProc); // El proceso entra a la CPU
+
+  // Se agrega un bloque al diagrama de Gantt para mostrar la ejecución
+  setGantt(g => [...g, {pid: runningProc.pid, name: runningProc.name, start: timeNow, end: null}]);
+  log('CPU inicia: ' + runningProc.name + ' (rem '+ runningProc.remaining +'u)');
+}
+
+// Continuar ejecutando el proceso actual en la CPU
+function continueExec(timeNow) {
+  setCpuState(c => {
+    if(!c) return c;
+    const updated = {...c};
+    updated.remaining = Math.max(0, updated.remaining - 1); // Disminuye tiempo restante
+    updated.usedQuantum = (updated.usedQuantum||0) + 1; // Incrementa quantum usado
+
+    // Actualizar el diagrama de Gantt
+    setGantt(g => {
+      if(g.length === 0) return g;
+      const last = g[g.length-1];
+      if(last.pid !== updated.pid) {
+        // Si cambió el proceso, se abre un nuevo bloque en Gantt
+        return [...g, {pid: updated.pid, name: updated.name, start: timeNow, end: timeNow+1}];
+      }
+      // Si sigue el mismo proceso, solo se extiende su bloque
+      const copy = [...g];
+      copy[copy.length-1] = {...last, end: timeNow+1};
+      return copy;
+    });
+
+    // Si el proceso terminó (tiempo restante = 0)
+    if(updated.remaining === 0) {
+      const finish = timeNow+1;
+      const turnaround = finish - updated.arrival; // Tiempo de retorno total
+      const waiting = turnaround - updated.cpuTime; // Tiempo de espera
+
+      // Guardar en historial de procesos terminados
+      setHistory(h => [...h, {...updated, finishTime:finish, turnaround, waiting}]);
+      // Eliminarlo de la lista de procesos activos
+      setProcesses(ps => ps.filter(pp => pp.pid !== updated.pid));
+      setCpuState(null); // CPU queda libre
+      log('Finalizó ' + updated.name + ' t=' + finish + ' (TA=' + turnaround + ', WT=' + waiting + ')');
+      return null;
     }
 
-    function startExec(proc, timeNow) {
-      if(!proc) return;
-      const runningProc = {...proc, usedQuantum:0};
-      setCpuState(runningProc);
-      setGantt(g => [...g, {pid: runningProc.pid, name: runningProc.name, start: timeNow, end: null}]);
-      log('CPU inicia: ' + runningProc.name + ' (rem '+ runningProc.remaining +'u)');
+    // Si es Round Robin y el quantum se agotó
+    if(algorithm === 'RoundRobin' && updated.usedQuantum >= quantum) {
+      updated.usedQuantum = 0; // Reinicia contador
+      setReadyQueue(r => [...r, updated]); // Devuelve a la cola de listos
+      setCpuState(null); // Libera CPU
+      log('Quantum agotado: ' + updated.name + ' (rem ' + updated.remaining + 'u)');
+      return null;
     }
 
-    function continueExec(timeNow) {
-      setCpuState(c => {
-        if(!c) return c;
-        const updated = {...c};
-        updated.remaining = Math.max(0, updated.remaining - 1);
-        updated.usedQuantum = (updated.usedQuantum||0) + 1;
-
-        setGantt(g => {
-          if(g.length === 0) return g;
-          const last = g[g.length-1];
-          if(last.pid !== updated.pid) {
-            return [...g, {pid: updated.pid, name: updated.name, start: timeNow, end: timeNow+1}];
-          }
-          const copy = [...g];
-          copy[copy.length-1] = {...last, end: timeNow+1};
-          return copy;
-        });
-
-        if(updated.remaining === 0) {
-          const finish = timeNow+1;
-          const turnaround = finish - updated.arrival;
-          const waiting = turnaround - updated.cpuTime;
-          setHistory(h => [...h, {...updated, finishTime:finish, turnaround, waiting}]);
-          setProcesses(ps => ps.filter(pp => pp.pid !== updated.pid));
-          setCpuState(null);
-          log('Finalizó ' + updated.name + ' t=' + finish + ' (TA=' + turnaround + ', WT=' + waiting + ')');
-          return null;
-        }
-
-        if(algorithm === 'RoundRobin' && updated.usedQuantum >= quantum) {
-          updated.usedQuantum = 0;
-          setReadyQueue(r => [...r, updated]);
-          setCpuState(null);
-          log('Quantum agotado: ' + updated.name + ' (rem ' + updated.remaining + 'u)');
-          return null;
-        }
-
-        return updated;
-      });
-    }
+    return updated; // Proceso sigue en ejecución
+  });
+}
 
     // Form handling
     function onAdd(e) {
@@ -377,3 +397,4 @@
   </script>
 </body>
 </html>
+
